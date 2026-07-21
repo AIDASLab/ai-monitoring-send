@@ -1,0 +1,29 @@
+{
+  "node_id": "AUTO (hostname)",
+  "interval_seconds": 300,
+  "retain_hours": 72,
+  "compress": true,
+  "nas_root": "/mnt/nas/yunseok/ai-monitoring",
+  "transport": {
+    "mode": "ssh",
+    "ssh_host": "aidaslab.synology.me",
+    "ssh_port": 2244,
+    "ssh_user": "synologynas",
+    "ssh_password": "",
+    "ssh_key": "",
+    "remote_root": "/volume1/nas-nfs/yunseok/ai-monitoring"
+  },
+  "claude": {
+    "enabled": true,
+    "config_dirs": []
+  },
+  "codex": {
+    "enabled": true,
+    "dirs": ["~/.codex"],
+    "include_archived": false
+  },
+  "claude_usage": {
+    "enabled": true,
+    "interval_seconds": 300
+  }
+}

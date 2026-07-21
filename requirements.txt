@@ -1,0 +1,15 @@
+# AIDAS monitoring sender — Python dependencies
+#
+# NONE. This agent intentionally uses only the Python 3 standard library
+# (json, urllib, gzip, pty, socket, subprocess, base64, glob, datetime ...),
+# so there is nothing to pip install.
+#
+#   pip install -r requirements.txt   # succeeds as a no-op
+#
+# System requirements:
+#   - Python 3.8+              (3.9+ recommended)
+#   - OpenSSH client (ssh, scp on PATH)   # only for transport.mode = "ssh"
+#                                          # (the default; not needed for "local")
+#
+# No third-party packages are listed below on purpose — keep it that way so the
+# agent stays trivially deployable on bare GPU servers (git clone + ./setup.sh).
