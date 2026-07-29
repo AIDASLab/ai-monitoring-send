@@ -29,7 +29,7 @@ source ~/.bashrc
 | # | 작업 | 결과물 |
 |---|---|---|
 | 1 | 계정별 설정 디렉토리 생성 (0700) | `~/.claude-lab1`, `~/.codex-lab1`, `~/.claude-lab2`, `~/.codex-lab2` |
-| 2 | VSCode 확장용 codex 래퍼 | `~/.local/bin/codex-lab1`, `codex-lab2` |
+| 2 | 자동화용 codex 래퍼 | `~/.local/bin/codex-lab1`, `codex-lab2` |
 | 3 | 셸 함수(alias) 자동 등록 | `~/.bashrc` 의 `lab1 <cmd>` / `lab2 <cmd>` |
 | 4 | VSCode 사이드바 계정 지정 | `~/.vscode-server/data/Machine/settings.json` |
 | 5 | sender 수집 경로 반영 | `config.json` 의 `claude.config_dirs`, `codex.dirs` |
@@ -60,12 +60,24 @@ python3 scripts/sidebar-account.py --personal    # 개인 계정(~/.codex, ~/.cl
 ```
 **VSCode 창 리로드**하면 적용됩니다(원격 서버 재시작 불필요).
 
+두 확장의 사정이 다릅니다. Claude 는 `claudeCode.environmentVariables` 라는 정식
+설정이 있지만, **Codex 확장에는 계정 설정이 없습니다.** `chatgpt.cliExecutable` 은
+app-server 실행에 쓰이지 않고(검증함), 확장은 자기 번들 바이너리
+`~/.vscode-server/extensions/openai.chatgpt-*/bin/*/codex` 를 직접 실행하며 계정은
+상속받은 `CODEX_HOME`(없으면 `~/.codex`)으로만 정해집니다. 확장 호스트에 그 변수를
+넣을 방법도 없어(이 서버 빌드는 `server-env-setup` 미지원), **번들 바이너리 자리에
+래퍼를 두고 원본을 `codex.real` 로 옮깁니다.**
+
+> ⚠️ Codex 확장을 업데이트하면 래퍼가 덮어써져 **조용히 개인 계정으로 돌아갑니다.**
+> 중앙의 `aidas-ai-monitoring/scripts/check-routing.py` 가 그 상태를 탐지하므로
+> 주기적으로 돌리세요. 복구는 `sidebar-account.py --lab <lab>` 재실행.
+
 ### 확장/터미널/자동화가 각각 어디에 기록되는지
 
 | 실행 주체 | 보는 값 | 기록 위치 |
 |---|---|---|
 | VSCode Claude 확장 | `claudeCode.environmentVariables` | 지정한 `~/.claude-labN` |
-| VSCode Codex 확장 | `chatgpt.cliExecutable` 래퍼의 `CODEX_HOME` | 지정한 `~/.codex-labN` |
+| VSCode Codex 확장 | 확장 번들 바이너리를 래핑한 `CODEX_HOME` | 지정한 `~/.codex-labN` |
 | 터미널 `lab1 codex` | 셸 함수 | `~/.codex-lab1` |
 | 터미널 맨 `codex` | 미설정 | `~/.codex` (개인) |
 | **스크립트·Claude Code 등 자동화** | 미설정 | **`~/.codex` (개인) ⚠** |

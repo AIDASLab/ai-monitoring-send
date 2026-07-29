@@ -8,9 +8,10 @@
 
 만드는 것:
   ~/.claude-<lab>  ~/.codex-<lab>      계정별 설정 디렉토리 (비어 있음; 로그인은 사람이)
-  ~/.local/bin/codex-<lab>             VSCode Codex 확장용 래퍼 (CODEX_HOME 고정)
+  ~/.local/bin/codex-<lab>             자동화·스크립트용 래퍼 (CODEX_HOME 고정)
   ~/.bashrc 의 lab1/lab2 함수          터미널에서 계정 전환
-  VSCode Machine settings.json         사이드바가 쓸 계정 지정
+  사이드바 계정                        sidebar-account.py 에 위임 (Claude=설정,
+                                       Codex=확장 번들 바이너리 래핑)
   sender config.json                   claude.config_dirs / codex.dirs 를 랩 디렉토리로
 
 건드리지 않는 것:
@@ -30,6 +31,7 @@ import os
 import re
 import shutil
 import stat
+import subprocess
 import sys
 import time
 
@@ -82,9 +84,11 @@ def make_dirs(labs, dry):
 # ------------------------------------------------------------------- wrappers
 WRAPPER = """#!/bin/sh
 # Codex CLI 래퍼 — {lab} 계정(~/.codex-{lab})으로 고정 실행.
-# VSCode Codex 확장은 계정 지정 설정이 없고 process.env.CODEX_HOME 만 보므로,
-# 확장 설정 "chatgpt.cliExecutable" 에 이 경로를 지정해 사이드바 계정을 정합니다.
-# 확장이 spawn 하는 프로세스에만 적용되어 터미널 codex/lab 함수에는 영향 없음.
+#
+# CODEX_HOME 을 상속받지 못하는 호출자(cron, 스크립트, Claude Code 의 Bash 등)가
+# 맨 `codex` 를 쓰면 개인 계정(~/.codex)으로 떨어져 랩 사용량이 집계에서 샙니다.
+# 그런 자동화에서는 `codex` 대신 이 경로를 부르세요.
+# (VSCode 사이드바 계정은 이 래퍼로 정해지지 않습니다 — sidebar-account.py 참고)
 exec env CODEX_HOME="$HOME/.codex-{lab}" {codex_bin} "$@"
 """
 
@@ -171,40 +175,33 @@ def patch_bashrc(labs, dry):
 
 # --------------------------------------------------------------------- vscode
 def patch_vscode(sidebar_lab, wrappers, dry):
+    """사이드바 계정 지정은 sidebar-account.py 에 위임한다.
+
+    Claude 는 정식 설정(claudeCode.environmentVariables)으로 되지만 Codex 는
+    확장 번들 바이너리를 래핑해야 해서 로직이 길다. 두 곳에 복제하지 않고
+    한쪽에만 두고, 여기서는 그걸 호출한다.
+    """
     if not os.path.isdir(os.path.join(HOME, ".vscode-server")):
         say("  = VSCode 원격 서버 없음 — 건너뜀")
         return
-    want = {"claudeCode.environmentVariables":
-            {"CLAUDE_CONFIG_DIR": os.path.join(HOME, f".claude-{sidebar_lab}")}}
-    if sidebar_lab in wrappers:
-        want["chatgpt.cliExecutable"] = wrappers[sidebar_lab]
-
-    cur, had_comments = {}, False
-    if os.path.exists(VSCODE_SETTINGS):
-        raw = open(VSCODE_SETTINGS, encoding="utf-8").read()
-        had_comments = "//" in raw
-        try:
-            cur = json.loads(re.sub(r"//.*", "", raw)) or {}
-        except ValueError:
-            warnings.append(f"{VSCODE_SETTINGS} 를 파싱하지 못해 건드리지 않았습니다. "
-                            f"수동으로 추가하세요: {json.dumps(want, ensure_ascii=False)}")
-            return
-    if all(cur.get(k) == v for k, v in want.items()):
-        say(f"  = 이미 최신  {VSCODE_SETTINGS}")
+    helper = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                          "sidebar-account.py")
+    if not os.path.exists(helper):
+        warnings.append(f"{helper} 가 없어 사이드바 계정을 설정하지 못했습니다.")
         return
-    merged = dict(cur)
-    merged.update(want)
-    changes.append(f"merge {VSCODE_SETTINGS}")
-    if had_comments:
-        warnings.append("VSCode settings.json 의 주석은 병합 과정에서 사라집니다 "
-                        "(원본은 .bak 로 남습니다).")
-    if not dry:
-        os.makedirs(os.path.dirname(VSCODE_SETTINGS), exist_ok=True)
-        backup(VSCODE_SETTINGS)
-        with open(VSCODE_SETTINGS, "w", encoding="utf-8") as f:
-            json.dump(merged, f, ensure_ascii=False, indent=2)
-            f.write("\n")
-    say(f"  + 설정      {VSCODE_SETTINGS}  (사이드바 → {sidebar_lab})")
+    cmd = [sys.executable, helper, "--lab", sidebar_lab]
+    if dry:
+        say(f"  ~ 실행 예정  {' '.join(cmd[1:])}")
+        changes.append(f"run {helper} --lab {sidebar_lab}")
+        return
+    r = subprocess.run(cmd, capture_output=True, text=True)
+    for line in (r.stdout or "").splitlines():
+        if line.strip().startswith(("+", "-", "=", "!", "⚠")):
+            say(f"  {line.strip()}")
+    if r.returncode != 0:
+        warnings.append(f"사이드바 설정 실패: {(r.stderr or r.stdout).strip()[:200]}")
+    elif "변경 없음" not in r.stdout:
+        changes.append("sidebar account")
 
 
 # --------------------------------------------------------------- sender config
