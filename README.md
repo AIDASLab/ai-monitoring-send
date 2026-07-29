@@ -24,7 +24,7 @@ GPU 서버 C ─┘                          ▲ (= 중앙의 /mnt/nas/yunseok/.
 ```bash
 git clone <this-repo> ai-monitoring-send
 cd ai-monitoring-send
-SSH_PASSWORD='Qwer!234' ./setup.sh        # 끝. 비번 자동입력으로 NAS에 전송 시작
+SSH_PASSWORD='<NAS_PASSWORD>' ./setup.sh        # 끝. 비번 자동입력으로 NAS에 전송 시작
 ```
 
 > `-bash: ./setup.sh: Permission denied` 가 뜨면 클론/복사 과정에서 실행 비트가
@@ -42,7 +42,7 @@ SSH_PASSWORD='Qwer!234' ./setup.sh        # 끝. 비번 자동입력으로 NAS�
 자주 쓰는 옵션:
 
 ```bash
-./setup.sh --host gpu7 --password 'Qwer!234'        # 호스트(노드) 이름 지정
+./setup.sh --host gpu7 --password '<NAS_PASSWORD>'        # 호스트(노드) 이름 지정
 ./setup.sh --host gpu7 --claude-dir /data/work/.claude   # .claude 폴더 직접 지정
 ./setup.sh --host gpu7 --claude-dir ~/.claude --claude-dir ~/.claude2  # 여러 개(반복)
 ./setup.sh --key ~/.ssh/id_ed25519                  # 비번 대신 SSH 키 사용(권장)

@@ -153,7 +153,7 @@ def ssh_exec(cfg, remote_cmd):
     argv = ["ssh"] + _common_opts(cfg) + [target, remote_cmd]
     code, out = _exec(cfg, argv)
     if code != 0:
-        raise SshError(f"ssh '{remote_cmd[:60]}' failed (code {code}): {out.strip()[:300]}")
+        raise SshError(f"ssh '{remote_cmd}' failed (code {code}): {out.strip()[:300]}")
     return out
 
 

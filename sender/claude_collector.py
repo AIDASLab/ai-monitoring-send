@@ -113,6 +113,7 @@ class ClaudeCollector:
         self.usage_enabled = usage_enabled
         self.usage_interval = max(180, usage_interval)  # endpoint 429s under ~180s
         self._last_account_identity = None
+        self._last_poll_ms = 0
         self._account_file_mtime_ms = 0
         # Cache utilization by account and token fingerprint.  A login switch
         # must never put account A's percentage on account B's dashboard card.
@@ -342,7 +343,9 @@ class ClaudeCollector:
             return None
         return offset if same_inode and 0 <= offset <= st.st_size else None
 
-    def _usage(self, account):
+    def _usage(self, account, account_stable: bool = False):
+        """``account_stable`` = the previous poll saw this exact account, which
+        is what lets a brand-new file be attributed instead of discarded."""
         records, updated = [], {}
         account_email = account.get("email") if account else None
         account_identity = self._account_identity(account)
@@ -366,8 +369,20 @@ class ClaudeCollector:
             # New/legacy files, truncation/replacement, logged-out reads, and
             # account boundaries have no provable account for the bytes parsed
             # in this poll.  They are intentionally not relabelled.
-            assumed = (offset is None or not account_identity or
-                       prior_identity != account_identity)
+            # Exception: a file we have never seen, written entirely since the
+            # previous poll, while the account stayed the same across both
+            # polls — no other account could have produced it.  Without this a
+            # short session (one-shot `claude -p`) is always discarded.
+            born_since_last_poll = (
+                prev is None and account_stable and self._last_poll_ms
+                and int(st.st_mtime * 1000) > self._last_poll_ms
+            )
+            if not account_identity:
+                assumed = True
+            elif born_since_last_poll:
+                assumed = False
+            else:
+                assumed = (offset is None or prior_identity != account_identity)
             record_email = account_email if not assumed else None
             parsed, next_offset = self._parse_file(
                 proj, path, record_email, assumed, offset or 0)
@@ -437,9 +452,10 @@ class ClaudeCollector:
         switched_from = (self._last_account_identity[1]
                          if switched and self._last_account_identity else None)
         account_stable = bool(identity and identity == self._last_account_identity)
-        usage, updated = self._usage(account)
+        usage, updated = self._usage(account, account_stable)
         sessions = self._sessions(email, account_stable)
         self._last_account_identity = identity
+        self._last_poll_ms = int(time.time() * 1000)
         return {
             "host": self.host,
             "account": account,

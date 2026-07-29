@@ -2,7 +2,7 @@
 # ONE-SHOT setup for a sender server.
 #
 #   git clone <repo> ai-monitoring-send && cd ai-monitoring-send
-#   SSH_PASSWORD='Qwer!234' ./setup.sh
+#   SSH_PASSWORD='<NAS_PASSWORD>' ./setup.sh
 #
 # Default transport is SSH (for servers WITHOUT the NAS mounted): the batch is
 # scp'd to the Synology NAS and the password is typed automatically.
@@ -10,7 +10,7 @@
 # Safe to re-run. Override via env or flags:
 #
 #   SSH_PASSWORD=...  HOST_ID=gpu7  INTERVAL=300 ./setup.sh
-#   ./setup.sh --password 'Qwer!234' --host gpu7
+#   ./setup.sh --password '<NAS_PASSWORD>' --host gpu7
 #   ./setup.sh --ssh-host aidaslab.synology.me --ssh-port 2244 --ssh-user synologynas \
 #              --remote-root /volume1/nas-nfs/yunseok/ai-monitoring --password '...'
 #   ./setup.sh --host gpu7 --claude-dir /data/work/.claude     # explicit .claude dir(s)

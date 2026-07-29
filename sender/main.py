@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import copy
+import getpass
 import glob
 import json
 import os
@@ -61,6 +62,46 @@ DEFAULTS = {
     # real 5h/weekly utilization via Anthropic OAuth usage endpoint (per account)
     "claude_usage": {"enabled": True, "interval_seconds": 300},
 }
+
+
+def _primary_ip():
+    """Best-effort outbound-facing local IP.
+
+    node_id is often just a hostname (sometimes a generic default like
+    "servername"), which is not enough to SSH back to the box. A UDP socket
+    connect() sends no packets — it only asks the kernel which local address
+    would be used for that route.
+    """
+    s = None
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.settimeout(1)
+        s.connect(("8.8.8.8", 53))
+        return s.getsockname()[0]
+    except OSError:
+        return None
+    finally:
+        if s is not None:
+            try:
+                s.close()
+            except OSError:
+                pass
+
+
+def _os_user():
+    """OS account the sender runs as (it reads THAT user's ~/.claude*/~/.codex).
+
+    getpass.getuser() consults the environment first, so fall back to the real
+    uid's passwd entry — a stale SUDO_USER/LOGNAME must not mislabel the node.
+    """
+    try:
+        import pwd
+        return pwd.getpwuid(os.getuid()).pw_name
+    except Exception:  # noqa: BLE001  (non-POSIX, or no passwd entry)
+        try:
+            return getpass.getuser()
+        except Exception:  # noqa: BLE001
+            return None
 
 
 def deep_merge(base, over):
@@ -180,6 +221,13 @@ def collect_all(cfg, collectors, state):
     return {
         "schema": 1, "host": cfg["node_id"],
         "generated_at": int(time.time() * 1000),
+        # Self-identification: which install on which account is reporting.
+        # Without this a node is only known by node_id, and finding the sender
+        # again (to redeploy or debug) means hunting the filesystem by hand.
+        "sender_root": ROOT,
+        "os_user": _os_user(),
+        "fqdn": socket.getfqdn(),
+        "ip": _primary_ip(),
         "accounts": accounts, "usage": usage, "sessions": sessions,
     }, pending_state
 

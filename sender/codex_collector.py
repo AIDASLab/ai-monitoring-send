@@ -104,6 +104,14 @@ class CodexCollector:
         # so the previous user's percentage never shows on the new user's card.
         self._rl_cache = {}          # {window: (ts_ms, data)}
         self._rl_cache_owner = None  # (account_id, email) the cache belongs to
+        # Account-boundary protection.  A rollout carries no account of its own,
+        # and a changed file is re-parsed in full, so labelling every turn with
+        # whatever account is logged in *now* would retroactively relabel turns
+        # written under a previous login.  A turn is only attributable when its
+        # own event timestamp falls after the previous poll AND the account was
+        # unchanged across those two polls.
+        self._last_poll_ms = 0
+        self._last_account_identity = None
 
     # -- account --
     def read_account(self):
@@ -150,7 +158,10 @@ class CodexCollector:
                     if fn.startswith("rollout-") and fn.endswith(".jsonl"):
                         yield os.path.join(dirpath, fn)
 
-    def _parse_rollout(self, path, email):
+    def _parse_rollout(self, path, email, attributable_after_ms=None):
+        """``attributable_after_ms``: turns at or after this belong to ``email``;
+        earlier ones are emitted as ``assumed`` so ingestion drops them instead
+        of crediting them to the wrong login.  ``None`` = everything assumed."""
         meta = {}
         model = None
         usage = []
@@ -192,6 +203,8 @@ class CodexCollector:
                             continue
                         sid = meta.get("id") or _sid_from_name(path)
                         seq += 1
+                        provable = bool(attributable_after_ms and ts
+                                        and ts >= attributable_after_ms)
                         usage.append({
                             "uuid": f"codex:{sid}:{ts}:{seq}",
                             "provider": "codex",
@@ -208,8 +221,8 @@ class CodexCollector:
                             "service_tier": plan,
                             "request_id": None,
                             "version": meta.get("cli_version"),
-                            "account_email": email,
-                            "assumed": False,
+                            "account_email": email if provable else None,
+                            "assumed": not provable,
                         })
         except OSError:
             return {}, [], {}
@@ -222,6 +235,9 @@ class CodexCollector:
         if owner != self._rl_cache_owner:
             self._rl_cache = {}
             self._rl_cache_owner = owner
+        # Only a login already in place at the previous poll can claim turns.
+        account_stable = bool(owner and owner == self._last_account_identity)
+        attributable_after_ms = self._last_poll_ms if account_stable else None
         now_ms = int(time.time() * 1000)
         records, updated, sessions = [], {}, []
         for path in self._iter_rollouts():
@@ -234,7 +250,8 @@ class CodexCollector:
             changed = not (prev and prev[0] == st.st_size and prev[1] == st.st_mtime)
             meta, usage = (None, [])
             if changed:
-                meta, usage, rl_wins = self._parse_rollout(path, email)
+                meta, usage, rl_wins = self._parse_rollout(
+                    path, email, attributable_after_ms)
                 records.extend(usage)
                 self.file_state[path] = (st.st_size, st.st_mtime)
                 updated[path] = [st.st_size, st.st_mtime]
