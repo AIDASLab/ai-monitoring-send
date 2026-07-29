@@ -30,9 +30,10 @@ source ~/.bashrc
 |---|---|---|
 | 1 | 계정별 설정 디렉토리 생성 (0700) | `~/.claude-lab1`, `~/.codex-lab1`, `~/.claude-lab2`, `~/.codex-lab2` |
 | 2 | 자동화용 codex 래퍼 | `~/.local/bin/codex-lab1`, `codex-lab2` |
-| 3 | 셸 함수(alias) 자동 등록 | `~/.bashrc` 의 `lab1 <cmd>` / `lab2 <cmd>` |
-| 4 | VSCode 사이드바 계정 지정 | `~/.vscode-server/data/Machine/settings.json` |
-| 5 | sender 수집 경로 반영 | `config.json` 의 `claude.config_dirs`, `codex.dirs` |
+| 3 | 원격 클라이언트 진입점 | `~/.local/bin/codex` 디스패처 (`app-server`만 랩으로) |
+| 4 | 셸 함수(alias) 자동 등록 | `~/.bashrc` 의 `lab1 <cmd>` / `lab2 <cmd>` |
+| 5 | VSCode 사이드바 계정 지정 | 확장 번들 바이너리 래핑 + `settings.json` |
+| 6 | sender 수집 경로 반영 | `config.json` 의 `claude.config_dirs`, `codex.dirs` |
 
 **멱등**합니다 — 두 번째 실행부터는 전부 `= 이미 최신`, 변경 0건. 바꾸는 파일은 모두
 `.bak-<타임스탬프>` 로 백업합니다. 마커 없이 손으로 넣어둔 예전 `lab1()/lab2()` 정의가
@@ -80,12 +81,25 @@ app-server 실행에 쓰이지 않고(검증함), 확장은 자기 번들 바이
 | VSCode Codex 확장 | 확장 번들 바이너리를 래핑한 `CODEX_HOME` | 지정한 `~/.codex-labN` |
 | 터미널 `lab1 codex` | 셸 함수 | `~/.codex-lab1` |
 | 터미널 맨 `codex` | 미설정 | `~/.codex` (개인) |
+| 데스크탑 앱 (SSH 원격) | `~/.local/bin/codex` 디스패처 | 지정한 `~/.codex-labN` |
 | **스크립트·Claude Code 등 자동화** | 미설정 | **`~/.codex` (개인) ⚠** |
 
 마지막 줄이 함정입니다. `CODEX_HOME` 을 상속받지 못하는 자동화(cron, 다른 Claude Code
 세션이 Bash로 띄우는 `codex` 등)는 랩 계정으로 잡히지 않습니다. **`codex` 대신
 `~/.local/bin/codex-lab1` 을 호출**하게 하세요. 이미 떠 있는 `codex resume` TUI도
 전환 이전에 시작됐다면 옛 디렉토리에 계속 씁니다 — `lab1 codex resume` 으로 다시 여세요.
+
+데스크탑 ChatGPT 앱이 SSH 로 붙는 경우는 별도 함정입니다. sshd 가
+`PATH="$HOME/.local/bin:$PATH"; codex app-server proxy` 를 실행하는데 그 셸에는
+`CODEX_HOME` 을 넣을 방법이 없습니다(`PermitUserEnvironment` 는 보통 꺼져 있고
+`~/.bashrc` 는 비대화형에서 즉시 return). 그래서 `setup-accounts.py` 가
+`~/.local/bin/codex` 를 **디스패처 스크립트**로 바꿔, IDE·원격 클라이언트 전용
+진입점인 `app-server` 서브커맨드일 때만 랩 계정으로 고정합니다. 터미널 대화형
+(`codex`, `codex resume`)은 그대로 개인 계정입니다.
+
+> ⚠️ codex 가 자기 자신을 업데이트하면 이 파일이 원래 심볼릭 링크로 되돌아가
+> 조용히 새기 시작합니다. `check-routing.py` 가 탐지하고, `setup-accounts.py`
+> 재실행으로 복구됩니다.
 
 ## 이번 변경 (왜 재배포가 필요한가)
 

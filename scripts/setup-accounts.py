@@ -119,6 +119,82 @@ def make_wrappers(labs, codex_bin, dry):
     return out
 
 
+# ---------------------------------------------------------------- dispatcher
+DISPATCHER = """#!/bin/sh
+# AIDAS: codex 진입점 디스패처.
+#
+# 데스크탑 앱이 SSH 로 붙으면 sshd 는
+#   PATH="${{CODEX_INSTALL_DIR:-$HOME/.local/bin}}:$PATH"; codex app-server proxy
+# 를 실행합니다. 그 셸에는 CODEX_HOME 을 넣을 방법이 없습니다
+# (PermitUserEnvironment 는 보통 꺼져 있고, .bashrc 는 비대화형에서 즉시 return).
+# 그래서 IDE·원격 클라이언트 전용 진입점인 `app-server` 서브커맨드일 때에 한해
+# 랩 계정으로 고정합니다. 터미널 대화형(codex, codex resume)은 손대지 않으므로
+# 맨 codex 는 그대로 개인 계정(~/.codex)입니다.
+# CODEX_HOME 이 이미 있으면(lab 함수, codex-labN 래퍼) 그걸 존중합니다.
+#
+# 원복: ln -sfn {real} {path}
+REAL="{real}"
+DEFAULT_APP_SERVER_HOME="{home}"
+
+# 플래그를 건너뛰고 첫 서브커맨드를 찾는다 (-c KEY=VAL 처럼 값을 먹는 플래그 주의).
+sub=""; skip=0
+for a in "$@"; do
+    if [ "$skip" = 1 ]; then skip=0; continue; fi
+    case "$a" in
+        -c|--config|--cd|-C|--model|-m) skip=1 ;;
+        -*) ;;
+        *) sub="$a"; break ;;
+    esac
+done
+
+if [ "$sub" = "app-server" ] && [ -z "$CODEX_HOME" ]; then
+    exec env CODEX_HOME="$DEFAULT_APP_SERVER_HOME" "$REAL" "$@"
+fi
+exec "$REAL" "$@"
+"""
+
+
+def install_dispatcher(sidebar_lab, dry):
+    """PATH 의 codex 를 디스패처로 바꿔 원격 클라이언트만 랩으로 돌린다."""
+    path = os.path.join(HOME, ".local", "bin", "codex")
+    if not os.path.exists(path):
+        say("  = PATH 에 codex 없음 — 건너뜀")
+        return
+    home = os.path.join(HOME, f".codex-{sidebar_lab}")
+    if os.path.islink(path):
+        real = os.path.realpath(path)
+    else:
+        m = re.search(r'REAL="([^"]+)"', open(path, encoding="utf-8",
+                                              errors="replace").read(4096))
+        if not m:
+            warnings.append(f"{path} 가 심볼릭 링크도 디스패처도 아닙니다. "
+                            f"덮어쓰지 않았습니다 — 직접 확인하세요.")
+            return
+        real = m.group(1).replace("$HOME", HOME)
+    if not os.access(real, os.X_OK):
+        warnings.append(f"codex 실제 실행 파일을 찾지 못했습니다: {real}")
+        return
+    body = DISPATCHER.format(real=real, home=home, path=path)
+    if not os.path.islink(path) and open(path, encoding="utf-8",
+                                         errors="replace").read() == body:
+        say(f"  = 이미 최신  {path}")
+        return
+    changes.append(f"write {path}")
+    if not dry:
+        # 심볼릭 링크를 먼저 지운다. 안 지우고 쓰면 링크를 따라가 실제 바이너리를
+        # 덮어쓴다(실행 중이면 ETXTBSY 로 실패, 아니면 300MB 바이너리가 날아간다).
+        if os.path.islink(path):
+            os.symlink(real, f"{path}.symlink-backup") if not os.path.lexists(
+                f"{path}.symlink-backup") else None
+            os.unlink(path)
+        else:
+            backup(path)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(body)
+        os.chmod(path, 0o755)
+    say(f"  + 디스패처  {path}  (app-server → ~/.codex-{sidebar_lab})")
+
+
 # --------------------------------------------------------------------- bashrc
 def bashrc_block(labs):
     lines = [BEGIN,
@@ -257,16 +333,18 @@ def main(argv=None):
     say(f"  claude={claude_bin or '못 찾음'}   codex={codex_bin or '못 찾음'}")
     say("\n[1] 설정 디렉토리")
     make_dirs(labs, dry)
-    say("\n[2] VSCode 확장용 codex 래퍼")
+    say("\n[2] 자동화용 codex 래퍼")
     wrappers = make_wrappers(labs, codex_bin, dry)
+    say("\n[3] 원격 클라이언트 진입점 (~/.local/bin/codex)")
+    install_dispatcher(sidebar, dry)
     if not a.no_bashrc:
-        say("\n[3] 셸 함수 (~/.bashrc)")
+        say("\n[4] 셸 함수 (~/.bashrc)")
         patch_bashrc(labs, dry)
     if not a.no_vscode:
-        say("\n[4] VSCode 사이드바 계정")
+        say("\n[5] VSCode 사이드바 계정")
         patch_vscode(sidebar, wrappers, dry)
     if not a.no_sender_config:
-        say("\n[5] sender 수집 경로")
+        say("\n[6] sender 수집 경로")
         patch_sender_config(labs, dry)
 
     say("\n" + "=" * 68)
