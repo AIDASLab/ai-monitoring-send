@@ -130,11 +130,15 @@ DISPATCHER = """#!/bin/sh
 # 그래서 IDE·원격 클라이언트 전용 진입점인 `app-server` 서브커맨드일 때에 한해
 # 랩 계정으로 고정합니다. 터미널 대화형(codex, codex resume)은 손대지 않으므로
 # 맨 codex 는 그대로 개인 계정(~/.codex)입니다.
-# CODEX_HOME 이 이미 있으면(lab 함수, codex-labN 래퍼) 그걸 존중합니다.
+#
+# 데스크탑 앱은 CODEX_HOME 을 비워두지 않고 개인 기본값(~/.codex)을 명시적으로
+# 넘깁니다. 그래서 "미설정일 때만" 으로는 안 잡히고, 개인 기본값과 같을 때도
+# 갈아끼웁니다. 반대로 lab1/lab2 처럼 의도적으로 지정한 값은 그대로 존중합니다.
 #
 # 원복: ln -sfn {real} {path}
 REAL="{real}"
 DEFAULT_APP_SERVER_HOME="{home}"
+PERSONAL_HOME="$HOME/.codex"
 
 # 플래그를 건너뛰고 첫 서브커맨드를 찾는다 (-c KEY=VAL 처럼 값을 먹는 플래그 주의).
 sub=""; skip=0
@@ -147,7 +151,8 @@ for a in "$@"; do
     esac
 done
 
-if [ "$sub" = "app-server" ] && [ -z "$CODEX_HOME" ]; then
+if [ "$sub" = "app-server" ] &&
+   {{ [ -z "$CODEX_HOME" ] || [ "$CODEX_HOME" = "$PERSONAL_HOME" ]; }}; then
     exec env CODEX_HOME="$DEFAULT_APP_SERVER_HOME" "$REAL" "$@"
 fi
 exec "$REAL" "$@"
