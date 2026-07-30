@@ -123,6 +123,20 @@ _TRANSIENT = ("connection reset", "kex_exchange_identification", "connection ref
               "broken pipe", "temporary failure", "no route to host", "reset by peer")
 _BACKOFF = (2, 5, 10)
 
+# Authentication failures must NOT be retried. ssh exits 255 for both network and
+# auth errors, so treating 255 as transient burned three password attempts per
+# call — and every cycle re-queued, so a wrong password or an IP-restricted
+# account turned into a flood of failed logins. NAS login protection (Synology
+# Auto Block) then blacklists the source address and the problem becomes
+# permanent and self-inflicted. Fail fast instead and say what to do.
+_AUTH_FAIL = ("permission denied", "authentication failed",
+              "too many authentication failures", "no supported authentication",
+              "account is locked", "access denied")
+
+
+def _is_auth_failure(out):
+    return any(t in (out or "").lower() for t in _AUTH_FAIL)
+
 
 def _exec_once(cfg, argv):
     password = cfg.get("ssh_password")
@@ -138,6 +152,8 @@ def _exec(cfg, argv, retries=2):
         code, out = _exec_once(cfg, argv)
         if code == 0:
             return code, out
+        if _is_auth_failure(out):
+            break                      # retrying only piles up failed logins
         low = (out or "").lower()
         transient = code == 255 or any(t in low for t in _TRANSIENT)
         if attempt < retries and transient:
@@ -147,13 +163,36 @@ def _exec(cfg, argv, retries=2):
     return code, out
 
 
+_AUTH_HELP = (
+    "인증 실패 — 자격증명이 거부됐습니다. 재시도하지 않았습니다"
+    "(반복 시도는 NAS 로그인 차단만 유발합니다). 확인 순서:\n"
+    "  1) 같은 자격증명으로 손으로 접속되는지:\n"
+    "       ssh -p {port} {user}@{host} 'echo ok'\n"
+    "     → 되는데 sender 만 실패하면 config.json 의 transport 값을 보세요.\n"
+    "     → 손으로도 안 되면 비밀번호가 틀렸거나 NAS 가 이 서버 IP 를 막고 있습니다\n"
+    "       (DSM > 제어판 > 보안 > 보호 > 허용/차단 목록에서 이 서버 IP 해제).\n"
+    "  2) 이 서버에서 비밀번호 인증이 막혀 있으면 키 방식으로 전환하세요:\n"
+    "       ./setup.sh --key ~/.ssh/id_ed25519 --host <서버이름>\n"
+    "     (키가 없으면 ssh-keygen -t ed25519 후 공개키를 NAS 의\n"
+    "      ~/.ssh/authorized_keys 에 등록 — DSM 파일 관리자로도 가능)")
+
+
+def auth_help(cfg):
+    return _AUTH_HELP.format(port=cfg.get("ssh_port", 22),
+                             user=cfg.get("ssh_user", "?"),
+                             host=cfg.get("ssh_host", "?"))
+
+
 def ssh_exec(cfg, remote_cmd):
     """Run a shell command on the remote host."""
     target = f"{cfg['ssh_user']}@{cfg['ssh_host']}"
     argv = ["ssh"] + _common_opts(cfg) + [target, remote_cmd]
     code, out = _exec(cfg, argv)
     if code != 0:
-        raise SshError(f"ssh '{remote_cmd}' failed (code {code}): {out.strip()[:300]}")
+        detail = out.strip()[:300]
+        if _is_auth_failure(out):
+            raise SshError(f"ssh '{remote_cmd}' failed: {detail}\n{auth_help(cfg)}")
+        raise SshError(f"ssh '{remote_cmd}' failed (code {code}): {detail}")
     return out
 
 
@@ -174,7 +213,10 @@ def scp_put(cfg, local_path, remote_path):
     if code != 0 and _opt_unsupported(out):
         code, out = _exec(cfg, ["scp"] + base + [local_path, target])
     if code != 0:
-        raise SshError(f"scp failed (code {code}): {out.strip()[:300]}")
+        detail = out.strip()[:300]
+        if _is_auth_failure(out):
+            raise SshError(f"scp failed: {detail}\n{auth_help(cfg)}")
+        raise SshError(f"scp failed (code {code}): {detail}")
     return out
 
 
