@@ -11,11 +11,13 @@ repo-local known_hosts) so nothing ever blocks on a tty.
 """
 from __future__ import annotations
 
+import hashlib
 import os
 import pty
 import select
 import signal
 import subprocess
+import tempfile
 import time
 
 DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data")
@@ -24,6 +26,35 @@ KNOWN_HOSTS = os.path.join(DATA_DIR, "known_hosts")
 
 class SshError(RuntimeError):
     pass
+
+
+# ssh appends ~17 chars to ControlPath while the socket is being set up, and
+# sun_path caps the whole thing at 104 bytes — so the repo's data/ dir is often
+# too long. Keep a margin for that suffix plus "/cm-" + 8 hex.
+_CONTROL_BUDGET = 104 - 30
+
+
+def _control_dir():
+    """Short, private directory for ssh control sockets, or None to skip multiplexing.
+
+    Must be owned by us and not group/world accessible — ssh refuses otherwise,
+    and a predictable path in a shared /tmp is worth protecting anyway.
+    """
+    cands = []
+    if os.environ.get("XDG_RUNTIME_DIR"):
+        cands.append(os.environ["XDG_RUNTIME_DIR"])
+    cands.append(os.path.join(tempfile.gettempdir(), f"aidas-ssh-{os.getuid()}"))
+    for d in cands:
+        if len(d) > _CONTROL_BUDGET:
+            continue
+        try:
+            os.makedirs(d, mode=0o700, exist_ok=True)
+            st = os.stat(d)
+        except OSError:
+            continue
+        if st.st_uid == os.getuid() and not (st.st_mode & 0o077):
+            return d
+    return None
 
 
 def _common_opts(cfg, for_scp=False):
@@ -37,6 +68,19 @@ def _common_opts(cfg, for_scp=False):
         "-o", "ServerAliveInterval=10",
         "-o", "LogLevel=ERROR",
     ]
+    # Reuse one TCP/auth session across mkdir+scp+mv. Without this a single
+    # delivery opened three connections, and flushing a backlog opened them in a
+    # burst — the NAS then dropped some during key exchange
+    # ("kex_exchange_identification: Connection reset by peer"), leaving a batch
+    # uploaded but never renamed. Purely an optimisation: if no short enough
+    # private directory exists we skip it rather than fail.
+    cdir = _control_dir()
+    if cdir:
+        tag = hashlib.sha256(
+            f"{cfg.get('ssh_user')}@{cfg.get('ssh_host')}:{port}".encode()).hexdigest()[:8]
+        opts += ["-o", "ControlMaster=auto",
+                 "-o", f"ControlPath={os.path.join(cdir, 'cm-' + tag)}",
+                 "-o", "ControlPersist=30"]
     key = cfg.get("ssh_key")
     if key:
         opts += ["-i", os.path.expanduser(key), "-o", "BatchMode=yes",
