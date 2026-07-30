@@ -23,11 +23,11 @@
 
 ## Step 0 — 레포 받기
 
-`YunseokHan/ai-monitoring-send` 는 **비공개**라 인증 없이 clone 되지 않습니다.
+`aidaslab/ai-monitoring-send` 는 **비공개**라 인증 없이 clone 되지 않습니다.
 
 ```bash
 # 처음이면 — 토큰 방식
-git clone https://<TOKEN>@github.com/YunseokHan/ai-monitoring-send.git ~/ai-monitoring-send
+git clone https://<TOKEN>@github.com/aidaslab/ai-monitoring-send.git ~/ai-monitoring-send
 cd ~/ai-monitoring-send
 
 # 이미 받아둔 서버면
