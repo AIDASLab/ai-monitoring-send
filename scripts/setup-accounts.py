@@ -40,7 +40,6 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BASHRC = os.path.join(HOME, ".bashrc")
 BEGIN = "# >>> aidas lab account switcher >>>"
 END = "# <<< aidas lab account switcher <<<"
-VSCODE_SETTINGS = os.path.join(HOME, ".vscode-server", "data", "Machine", "settings.json")
 
 changes: list[str] = []
 warnings: list[str] = []
@@ -262,8 +261,11 @@ def patch_vscode(sidebar_lab, wrappers, dry):
     확장 번들 바이너리를 래핑해야 해서 로직이 길다. 두 곳에 복제하지 않고
     한쪽에만 두고, 여기서는 그걸 호출한다.
     """
-    if not os.path.isdir(os.path.join(HOME, ".vscode-server")):
-        say("  = VSCode 원격 서버 없음 — 건너뜀")
+    # 설치 형태(Remote 서버 / 로컬 / Insiders / code-server)를 모두 확인한다.
+    if not any(os.path.isdir(os.path.join(HOME, d)) for d in
+               (".vscode-server", ".vscode-server-insiders", ".vscode",
+                os.path.join(".local", "share", "code-server"))):
+        say("  = VSCode 설치 없음 — 건너뜀 (터미널 lab1/lab2 만 사용)")
         return
     helper = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                           "sidebar-account.py")

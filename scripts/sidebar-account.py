@@ -34,7 +34,36 @@ import sys
 import time
 
 HOME = os.path.expanduser("~")
-SETTINGS = os.path.join(HOME, ".vscode-server", "data", "Machine", "settings.json")
+
+# VSCode 계열은 설치 형태마다 경로가 다릅니다. Remote-SSH/터널 서버, 로컬 설치,
+# Insiders, code-server 를 모두 훑어 실제로 있는 것을 씁니다. 하나도 없으면
+# 그 서버는 사이드바를 안 쓰는 것이므로 이 스크립트가 할 일이 없습니다.
+_ROOTS = (
+    (".vscode-server", ("data", "Machine", "settings.json"), ("extensions",)),
+    (".vscode-server-insiders", ("data", "Machine", "settings.json"), ("extensions",)),
+    (".vscode", ("data", "Machine", "settings.json"), ("extensions",)),
+    (os.path.join(".local", "share", "code-server"),
+     ("Machine", "settings.json"), ("extensions",)),
+)
+
+
+def _roots():
+    return [(os.path.join(HOME, r), s, e) for r, s, e in _ROOTS
+            if os.path.isdir(os.path.join(HOME, r))]
+
+
+def settings_path():
+    """머신 설정 파일 경로. 설치가 여러 개면 확장이 실제로 있는 쪽을 우선한다."""
+    roots = _roots()
+    for root, s, e in roots:
+        if glob.glob(os.path.join(root, *e, "anthropic.claude-code-*")) or \
+           glob.glob(os.path.join(root, *e, "openai.chatgpt-*")):
+            return os.path.join(root, *s)
+    return os.path.join(roots[0][0], *roots[0][1]) if roots else None
+
+
+SETTINGS = settings_path() or os.path.join(
+    HOME, ".vscode-server", "data", "Machine", "settings.json")
 CLAUDE_KEY = "claudeCode.environmentVariables"
 DEAD_KEY = "chatgpt.cliExecutable"  # app-server 실행에 안 쓰임 — 있으면 지운다
 
@@ -80,9 +109,8 @@ def save_settings(cfg, had_comments):
 def ext_binaries():
     """Codex 확장의 번들 codex 바이너리 경로들 (보통 1개)."""
     out = []
-    for base in (os.path.join(HOME, ".vscode-server", "extensions"),
-                 os.path.join(HOME, ".vscode", "extensions")):
-        for ext in sorted(glob.glob(os.path.join(base, "openai.chatgpt-*"))):
+    for root, _s, e in _roots():
+        for ext in sorted(glob.glob(os.path.join(root, *e, "openai.chatgpt-*"))):
             out += glob.glob(os.path.join(ext, "bin", "*", "codex"))
     return out
 
