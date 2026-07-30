@@ -117,6 +117,12 @@ def merge_jsonl(src, dst, key, move, dry, log):
             seen.add(k)
             add.append(line)
     if not add:
+        # 목표가 원본 항목을 모두 갖고 있다. 이동이라면 원본을 치운다.
+        if move:
+            log(f"  + 원본 정리  {os.path.basename(src)} (항목이 이미 전부 반영됨)")
+            if not dry:
+                os.remove(src)
+            return 1
         log(f"  = 이미 최신  {os.path.basename(src)}")
         return 0
     log(f"  + 항목 {len(add)}개 추가  {os.path.basename(src)}")
@@ -131,7 +137,7 @@ def merge_jsonl(src, dst, key, move, dry, log):
 
 def copy_tree(src, dst, move, dry, log):
     """파일 단위로 옮긴다. 이미 있는 동일 파일(크기+mtime)은 건너뛴다."""
-    moved = skipped = 0
+    moved = skipped = cleaned = 0
     for root, _dirs, files in os.walk(src):
         rel = os.path.relpath(root, src)
         target_dir = dst if rel == "." else os.path.join(dst, rel)
@@ -145,7 +151,15 @@ def copy_tree(src, dst, move, dry, log):
             if os.path.exists(t):
                 ts = os.stat(t)
                 if ts.st_size == ss.st_size and int(ts.st_mtime) == int(ss.st_mtime):
-                    skipped += 1
+                    # 이미 목표에 같은 파일이 있다. 복사였다면 할 일이 없지만,
+                    # 이동이라면 원본을 치워야 이관이 끝난다 — 안 지우면 복사로
+                    # 한 번 돌린 뒤 --move 로 다시 돌려도 원본이 계속 남는다.
+                    if move:
+                        if not dry:
+                            os.remove(s)
+                        cleaned += 1
+                    else:
+                        skipped += 1
                     continue
             if not dry:
                 os.makedirs(target_dir, exist_ok=True)
@@ -158,9 +172,10 @@ def copy_tree(src, dst, move, dry, log):
                 else:
                     shutil.copy2(s, t)
             moved += 1
-    log(f"  {'+ ' if moved else '= '}{moved}개 {'이동' if move else '복사'}"
+    log(f"  {'+ ' if moved or cleaned else '= '}{moved}개 {'이동' if move else '복사'}"
+        + (f", {cleaned}개 원본 정리(이미 목표에 있던 것)" if cleaned else "")
         + (f", {skipped}개 이미 있음" if skipped else ""))
-    return moved
+    return moved + cleaned
 
 
 def migrate(kind, src, dst, items, move, dry, log):
