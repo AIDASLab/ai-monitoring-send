@@ -94,7 +94,9 @@ MSG
 fi
 
 # 1) create config.json (chmod 600 — it can hold the password)
+CONFIG_WRITTEN=0
 if [ ! -f config.json ]; then
+  CONFIG_WRITTEN=1
   echo "creating config.json (mode=$MODE, node=$NODE_ID)"
   CLAUDE_DIRS_ENV=""; CODEX_DIRS_ENV=""
   if [ ${#CLAUDE_DIRS[@]} -gt 0 ]; then CLAUDE_DIRS_ENV=$(printf '%s\n' "${CLAUDE_DIRS[@]}"); fi
@@ -155,5 +157,18 @@ UNIT
 fi
 
 # 3) start in the background (use `bash` so it works even before chmod takes hold)
+#
+# A sender that is already running holds the OLD config in memory — it read it
+# once at startup. If we just rewrote config.json (new credentials, new
+# collection paths) and left that process alone, every delivery keeps failing
+# with the old credentials while the queue grows, and the one-shot test above
+# succeeds with the new ones. That mismatch is invisible and wasted hours, so
+# restart whenever the config changed.
+if [ "$CONFIG_WRITTEN" = "1" ] && [ -f data/sender.pid ] \
+   && kill -0 "$(cat data/sender.pid 2>/dev/null)" 2>/dev/null; then
+  echo "config.json changed and a sender is already running — restarting it so"
+  echo "the new settings take effect (the old process still holds the old ones)."
+  bash stop.sh
+fi
 bash start.sh
 echo "Done. The central dashboard will show host '$NODE_ID' within ~1 minute."
