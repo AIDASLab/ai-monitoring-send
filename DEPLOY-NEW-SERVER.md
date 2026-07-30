@@ -152,6 +152,37 @@ CLAUDE_CONFIG_DIR=~/.claude-lab1 ~/.local/bin/claude auth status
 
 ---
 
+## Step 3.5 — 기존 이력을 랩 디렉토리로 이관 (선택)
+
+`~/.codex`·`~/.claude` 에 있던 과거 대화는 랩 디렉토리에서 `resume` 목록에 안 뜹니다.
+이어서 쓰려면 옮기세요.
+
+```bash
+python3 scripts/migrate-history.py --to lab1 --dry-run    # 무엇이 옮겨지는지
+python3 scripts/migrate-history.py --to lab1 --move       # 이동 (원본 비움)
+python3 scripts/migrate-history.py --to lab1              # 복사 (원본 유지)
+```
+
+옮기는 것: codex `sessions/`·`archived_sessions/`·`session_index.jsonl`·`history.jsonl`,
+claude `projects/`·`history.jsonl`·`todos/`·`tasks/`.
+`--extras` 를 주면 `config.toml`·`skills/`·`plugins/`·`settings.json`·`CLAUDE.md` 도 포함합니다.
+
+**절대 옮기지 않는 것**: `auth.json`, `.credentials.json`, `packages/`, 캐시류.
+계정은 각 디렉토리의 로그인으로만 정해져야 합니다.
+
+> ⚠️ **원본과 목표의 로그인 계정이 다르면 중단합니다.** 개인 계정 이력을 랩으로
+> 옮기면 그 사용량이 랩 계정 사람에게 귀속되기 때문입니다. codex/claude 를 각각
+> 판정하므로, 한쪽만 랩 계정이면 그쪽만 옮기고 다른 쪽은 건너뜁니다.
+> 정말 강행해야 하면 `--force`.
+
+옮겨도 **과거 사용량이 새로 집계되지는 않습니다** — 수집기는 처음 읽는 기록을 계정
+미확정으로 버리고, 대시보드는 `tracking.count_from_ms` 이후만 셉니다. 목적은
+`resume` 로 이어 쓰는 것입니다.
+
+`--move` 는 같은 파일시스템이면 rename 이라 추가 용량이 들지 않습니다. 복사는
+용량을 두 배로 쓰므로, 여유가 부족하면 스크립트가 미리 막고 `--move` 를 권합니다.
+멱등하니 두 번 실행해도 안전합니다(`변경 없음`).
+
 ## Step 4 — 수집 경로 반영 후 sender 재시작
 
 ```bash
