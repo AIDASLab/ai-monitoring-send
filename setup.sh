@@ -67,6 +67,32 @@ if [ "$MODE" = "ssh" ] && [ -z "$SSH_PASSWORD" ] && [ -z "$SSH_KEY" ]; then
   read -rs SSH_PASSWORD; echo >&2
 fi
 
+# A passphrase-protected key works when you ssh by hand (ssh-agent holds it) but
+# NOT for the sender: it runs in the background with BatchMode=yes and no agent,
+# so every delivery fails with a confusing permission error. Catch it here.
+if [ -n "$SSH_KEY" ]; then
+  KEY_PATH="${SSH_KEY/#\~/$HOME}"
+  if [ ! -f "$KEY_PATH" ]; then
+    echo "ssh key not found: $KEY_PATH" >&2; exit 1
+  fi
+  if ! ssh-keygen -y -P '' -f "$KEY_PATH" >/dev/null 2>&1; then
+    cat >&2 <<MSG
+ERROR: $KEY_PATH 에 passphrase 가 걸려 있습니다.
+
+sender 는 백그라운드에서 ssh-agent 없이 돌기 때문에 이 키로는 배송이 계속
+실패합니다(손으로 ssh 하면 agent 가 대신 풀어주므로 되는 것처럼 보입니다).
+
+NAS 전용 passphrase 없는 키를 따로 만드세요 — 기존 키의 passphrase 를 벗기는
+것보다 안전합니다(그 키는 GitHub 등 다른 곳에도 쓰일 수 있습니다):
+
+  ssh-keygen -t ed25519 -N '' -f ~/.ssh/id_ed25519_nas -q
+  cat ~/.ssh/id_ed25519_nas.pub      # 이 줄을 NAS 의 ~/.ssh/authorized_keys 에 추가
+  ./setup.sh --key ~/.ssh/id_ed25519_nas --host <서버이름>
+MSG
+    exit 1
+  fi
+fi
+
 # 1) create config.json (chmod 600 — it can hold the password)
 if [ ! -f config.json ]; then
   echo "creating config.json (mode=$MODE, node=$NODE_ID)"
