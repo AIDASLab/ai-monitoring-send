@@ -33,7 +33,7 @@ source ~/.bashrc
 | # | 작업 | 결과물 |
 |---|---|---|
 | 1 | 계정별 설정 디렉토리 생성 (0700) | `~/.claude-lab1`, `~/.codex-lab1`, `~/.claude-lab2`, `~/.codex-lab2` |
-| 2 | 자동화용 codex 래퍼 | `~/.local/bin/codex-lab1`, `codex-lab2` |
+| 2 | PATH 실행 파일 | `~/.local/bin/lab1`·`lab2` 런처, `codex-lab1`·`claude-lab1` 래퍼 |
 | 3 | 원격 클라이언트 진입점 | `~/.local/bin/codex` 디스패처 (`app-server`만 랩으로) |
 | 4 | 셸 함수(alias) 자동 등록 | `~/.bashrc` 의 `lab1 <cmd>` / `lab2 <cmd>` |
 | 5 | VSCode 사이드바 계정 지정 | 확장 번들 바이너리 래핑 + `settings.json` |
@@ -83,7 +83,7 @@ app-server 실행에 쓰이지 않고(검증함), 확장은 자기 번들 바이
 |---|---|---|
 | VSCode Claude 확장 | `claudeCode.environmentVariables` | 지정한 `~/.claude-labN` |
 | VSCode Codex 확장 | 확장 번들 바이너리를 래핑한 `CODEX_HOME` | 지정한 `~/.codex-labN` |
-| 터미널 `lab1 codex` | 셸 함수 | `~/.codex-lab1` |
+| 터미널 `lab1 codex` | `~/.local/bin/lab1` 런처 (셸 함수도 있음) | `~/.codex-lab1` |
 | 터미널 맨 `codex` | 미설정 | `~/.codex` (개인) |
 | 데스크탑 앱 (SSH 원격) | `~/.local/bin/codex` 디스패처 | 지정한 `~/.codex-labN` |
 | **스크립트·Claude Code 등 자동화** | 미설정 | **`~/.codex` (개인) ⚠** |

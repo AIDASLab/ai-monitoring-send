@@ -8,8 +8,9 @@
 
 만드는 것:
   ~/.claude-<lab>  ~/.codex-<lab>      계정별 설정 디렉토리 (비어 있음; 로그인은 사람이)
-  ~/.local/bin/codex-<lab>             자동화·스크립트용 래퍼 (CODEX_HOME 고정)
-  ~/.bashrc 의 lab1/lab2 함수          터미널에서 계정 전환
+  ~/.local/bin/<lab>                   계정 전환 런처 — `lab1 codex resume`
+  ~/.local/bin/codex-<lab>, claude-<lab>  도구별 래퍼 (자동화·cron 용)
+  ~/.bashrc 의 lab1/lab2 함수          같은 일을 하는 셸 함수 (런처가 주 경로)
   사이드바 계정                        sidebar-account.py 에 위임 (Claude=설정,
                                        Codex=확장 번들 바이너리 래핑)
   sender config.json                   claude.config_dirs / codex.dirs 를 랩 디렉토리로
@@ -81,40 +82,67 @@ def make_dirs(labs, dry):
 
 
 # ------------------------------------------------------------------- wrappers
-WRAPPER = """#!/bin/sh
-# Codex CLI 래퍼 — {lab} 계정(~/.codex-{lab})으로 고정 실행.
+LAUNCHER = """#!/bin/sh
+# 계정 전환 런처 — `{lab} <명령> [인자...]` 를 {lab} 계정으로 실행합니다.
 #
-# CODEX_HOME 을 상속받지 못하는 호출자(cron, 스크립트, Claude Code 의 Bash 등)가
-# 맨 `codex` 를 쓰면 개인 계정(~/.codex)으로 떨어져 랩 사용량이 집계에서 샙니다.
-# 그런 자동화에서는 `codex` 대신 이 경로를 부르세요.
-# (VSCode 사이드바 계정은 이 래퍼로 정해지지 않습니다 — sidebar-account.py 참고)
-exec env CODEX_HOME="$HOME/.codex-{lab}" {codex_bin} "$@"
+#   {lab} codex resume     {lab} claude     {lab} codex exec ...
+#
+# ~/.bashrc 의 {lab}() 함수와 같은 일을 하지만 **실제 실행 파일**입니다. 함수는
+# rc 파일을 읽은 셸에서만 살아 있어서, 설정 전에 열어둔 탭이나 tmux pane,
+# 비대화형 셸, 스크립트에서는 "command not found" 가 납니다. 이 파일은 PATH 에
+# 있으면 어디서든 동작합니다.
+exec env CODEX_HOME="$HOME/.codex-{lab}" CLAUDE_CONFIG_DIR="$HOME/.claude-{lab}" "$@"
+"""
+
+TOOL_WRAPPER = """#!/bin/sh
+# {tool} 래퍼 — {lab} 계정({var}=~/{dirname})으로 고정 실행.
+#
+# CODEX_HOME/CLAUDE_CONFIG_DIR 을 상속받지 못하는 호출자(cron, 스크립트,
+# 다른 도구가 띄우는 프로세스)가 맨 `{tool}` 을 쓰면 개인 계정으로 떨어져 랩
+# 사용량이 집계에서 샙니다. 그런 곳에서는 `{tool}` 대신 이 경로를 부르세요.
+exec env {var}="$HOME/{dirname}" {bin} "$@"
 """
 
 
-def make_wrappers(labs, codex_bin, dry):
-    if not codex_bin:
-        warnings.append("codex 실행 파일을 찾지 못해 래퍼를 만들지 못했습니다 "
-                        "(--codex-bin 으로 지정하세요).")
-        return {}
+def _write_exec(path, body, dry, label):
+    if os.path.exists(path) and open(path, encoding="utf-8",
+                                     errors="replace").read() == body:
+        say(f"  = 이미 최신  {path}")
+        return
+    changes.append(f"write {path}")
+    if not dry:
+        backup(path)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(body)
+        os.chmod(path, 0o755)
+    say(f"  + {label}  {path}")
+
+
+def make_wrappers(labs, codex_bin, claude_bin, dry):
+    """PATH 에 놓는 실행 파일들: labN 런처 + codex-labN / claude-labN 래퍼."""
     out = {}
     bindir = os.path.join(HOME, ".local", "bin")
     if not dry:
         os.makedirs(bindir, exist_ok=True)
+    if bindir not in (os.environ.get("PATH") or "").split(os.pathsep):
+        warnings.append(f"{bindir} 가 PATH 에 없습니다. lab1/codex-lab1 을 이름으로 "
+                        f"부를 수 없으니 ~/.bashrc 에 "
+                        f'export PATH="$HOME/.local/bin:$PATH" 를 추가하세요.')
     for lab in labs:
-        p = os.path.join(bindir, f"codex-{lab}")
-        out[lab] = p
-        body = WRAPPER.format(lab=lab, codex_bin=codex_bin)
-        if os.path.exists(p) and open(p, encoding="utf-8").read() == body:
-            say(f"  = 이미 최신  {p}")
-            continue
-        changes.append(f"write {p}")
-        if not dry:
-            backup(p)
-            with open(p, "w", encoding="utf-8") as f:
-                f.write(body)
-            os.chmod(p, os.stat(p).st_mode | stat.S_IXUSR | stat.S_IXGRP)
-        say(f"  + 래퍼      {p}")
+        # 어느 셸에서든 되는 런처. 함수가 안 잡히는 상황의 해결책.
+        _write_exec(os.path.join(bindir, lab), LAUNCHER.format(lab=lab), dry, "런처  ")
+        for tool, binpath, var in (("codex", codex_bin, "CODEX_HOME"),
+                                   ("claude", claude_bin, "CLAUDE_CONFIG_DIR")):
+            if not binpath:
+                warnings.append(f"{tool} 실행 파일을 찾지 못해 {tool}-{lab} 래퍼를 "
+                                f"만들지 못했습니다 (--{tool}-bin 으로 지정하세요).")
+                continue
+            p = os.path.join(bindir, f"{tool}-{lab}")
+            if tool == "codex":
+                out[lab] = p
+            _write_exec(p, TOOL_WRAPPER.format(
+                tool=tool, lab=lab, var=var, bin=binpath,
+                dirname=f".{tool}-{lab}"), dry, "래퍼  ")
     return out
 
 
@@ -340,8 +368,8 @@ def main(argv=None):
     say(f"  claude={claude_bin or '못 찾음'}   codex={codex_bin or '못 찾음'}")
     say("\n[1] 설정 디렉토리")
     make_dirs(labs, dry)
-    say("\n[2] 자동화용 codex 래퍼")
-    wrappers = make_wrappers(labs, codex_bin, dry)
+    say("\n[2] PATH 실행 파일 (labN 런처 + codex/claude 래퍼)")
+    wrappers = make_wrappers(labs, codex_bin, claude_bin, dry)
     say("\n[3] 원격 클라이언트 진입점 (~/.local/bin/codex)")
     install_dispatcher(sidebar, dry)
     if not a.no_bashrc:
