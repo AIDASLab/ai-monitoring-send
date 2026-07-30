@@ -27,7 +27,7 @@
 
 ```bash
 # 처음이면 — 토큰 방식
-git clone https://<TOKEN>@github.com/aidaslab/ai-monitoring-send.git ~/ai-monitoring-send
+git clone https://<TOKEN>@github.com/AIDASLab/ai-monitoring-send.git ~/ai-monitoring-send
 cd ~/ai-monitoring-send
 
 # 이미 받아둔 서버면
