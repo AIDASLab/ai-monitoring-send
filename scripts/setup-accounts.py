@@ -282,7 +282,7 @@ def patch_bashrc(labs, dry):
 
 
 # --------------------------------------------------------------------- vscode
-def patch_vscode(sidebar_lab, wrappers, dry):
+def patch_vscode(claude_lab, codex_lab, wrappers, dry):
     """사이드바 계정 지정은 sidebar-account.py 에 위임한다.
 
     Claude 는 정식 설정(claudeCode.environmentVariables)으로 되지만 Codex 는
@@ -300,19 +300,26 @@ def patch_vscode(sidebar_lab, wrappers, dry):
     if not os.path.exists(helper):
         warnings.append(f"{helper} 가 없어 사이드바 계정을 설정하지 못했습니다.")
         return
-    cmd = [sys.executable, helper, "--lab", sidebar_lab]
-    if dry:
-        say(f"  ~ 실행 예정  {' '.join(cmd[1:])}")
-        changes.append(f"run {helper} --lab {sidebar_lab}")
-        return
-    r = subprocess.run(cmd, capture_output=True, text=True)
-    for line in (r.stdout or "").splitlines():
-        if line.strip().startswith(("+", "-", "=", "!", "⚠")):
-            say(f"  {line.strip()}")
-    if r.returncode != 0:
-        warnings.append(f"사이드바 설정 실패: {(r.stderr or r.stdout).strip()[:200]}")
-    elif "변경 없음" not in r.stdout:
-        changes.append("sidebar account")
+    # 두 확장이 서로 다른 랩을 써야 하면 한쪽씩 따로 호출한다. 같으면 한 번이면 된다.
+    jobs = ([(claude_lab, None)] if claude_lab == codex_lab
+            else [(claude_lab, "--claude-only"), (codex_lab, "--codex-only")])
+    for lab, only in jobs:
+        cmd = [sys.executable, helper, "--lab", lab] + ([only] if only else [])
+        label = {"--claude-only": "claude", "--codex-only": "codex"}.get(only, "claude+codex")
+        if dry:
+            say(f"  ~ 실행 예정  sidebar-account.py --lab {lab}"
+                f"{' ' + only if only else ''}  ({label})")
+            changes.append(f"run {helper} --lab {lab} {only or ''}".strip())
+            continue
+        r = subprocess.run(cmd, capture_output=True, text=True)
+        for line in (r.stdout or "").splitlines():
+            if line.strip().startswith(("+", "-", "=", "!", "⚠")):
+                say(f"  [{label}] {line.strip()}")
+        if r.returncode != 0:
+            warnings.append(f"사이드바({label}) 설정 실패: "
+                            f"{(r.stderr or r.stdout).strip()[:200]}")
+        elif "변경 없음" not in r.stdout:
+            changes.append(f"sidebar {label}")
 
 
 # --------------------------------------------------------------- sender config
@@ -345,6 +352,10 @@ def main(argv=None):
     p = argparse.ArgumentParser(description="계정별 디렉토리 리팩토링")
     p.add_argument("--labs", default="lab1,lab2",
                    help="랩 계정 이름들 (쉼표 구분, 기본 lab1,lab2)")
+    p.add_argument("--sidebar-claude", default=None, metavar="LAB",
+                   help="Claude 사이드바만 다른 랩으로 (기본: --sidebar 값)")
+    p.add_argument("--sidebar-codex", default=None, metavar="LAB",
+                   help="Codex 사이드바·원격 진입점만 다른 랩으로 (기본: --sidebar 값)")
     p.add_argument("--sidebar", default=None,
                    help="VSCode 사이드바가 쓸 랩 (기본: 첫 번째)")
     p.add_argument("--claude-bin", default=None)
@@ -360,24 +371,32 @@ def main(argv=None):
         print("--labs 가 비었습니다", file=sys.stderr)
         return 2
     sidebar = a.sidebar or labs[0]
+    # 도구마다 다른 계정을 쓰는 서버가 있다 (codex 는 랩2, claude 는 랩1 처럼).
+    sidebar_claude = a.sidebar_claude or sidebar
+    sidebar_codex = a.sidebar_codex or sidebar
+    for name, lab in (("--sidebar-claude", sidebar_claude), ("--sidebar-codex", sidebar_codex)):
+        if lab not in labs:
+            warnings.append(f"{name}={lab} 이 --labs({','.join(labs)}) 에 없습니다. "
+                            f"그 디렉토리는 만들어지지 않습니다.")
     claude_bin = a.claude_bin or which("claude")
     codex_bin = a.codex_bin or which("codex")
     dry = a.dry_run
 
-    say(f"{'[DRY-RUN] ' if dry else ''}계정별 디렉토리 리팩토링  labs={labs}  sidebar={sidebar}")
+    say(f"{'[DRY-RUN] ' if dry else ''}계정별 디렉토리 리팩토링  labs={labs}  "
+        f"사이드바 claude={sidebar_claude} codex={sidebar_codex}")
     say(f"  claude={claude_bin or '못 찾음'}   codex={codex_bin or '못 찾음'}")
     say("\n[1] 설정 디렉토리")
     make_dirs(labs, dry)
     say("\n[2] PATH 실행 파일 (labN 런처 + codex/claude 래퍼)")
     wrappers = make_wrappers(labs, codex_bin, claude_bin, dry)
     say("\n[3] 원격 클라이언트 진입점 (~/.local/bin/codex)")
-    install_dispatcher(sidebar, dry)
+    install_dispatcher(sidebar_codex, dry)
     if not a.no_bashrc:
         say("\n[4] 셸 함수 (~/.bashrc)")
         patch_bashrc(labs, dry)
     if not a.no_vscode:
         say("\n[5] VSCode 사이드바 계정")
-        patch_vscode(sidebar, wrappers, dry)
+        patch_vscode(sidebar_claude, sidebar_codex, wrappers, dry)
     if not a.no_sender_config:
         say("\n[6] sender 수집 경로")
         patch_sender_config(labs, dry)

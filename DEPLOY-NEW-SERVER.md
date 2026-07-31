@@ -127,6 +127,25 @@ python3 scripts/setup-accounts.py              # 적용
 주요 옵션: `--labs lab1`(랩 1개만) `--sidebar lab2` `--no-vscode` `--no-bashrc`
 `--no-sender-config` `--claude-bin/--codex-bin`(CLI 가 PATH 밖일 때)
 
+### 도구마다 다른 계정을 쓰는 서버
+
+기존 `~/.codex` 가 랩2 계정이고 `~/.claude` 가 랩1 계정인 서버처럼, 도구별로 계정이
+갈리는 경우가 있습니다. 그때는 사이드바를 따로 지정하세요.
+
+```bash
+python3 scripts/setup-accounts.py --sidebar-claude lab1 --sidebar-codex lab2
+```
+`--sidebar-codex` 는 Codex 확장 래퍼와 원격 진입점 디스패처를 함께 움직입니다.
+지정하지 않은 쪽은 `--sidebar`(기본 첫 번째 랩) 값을 씁니다.
+
+**이력 이관도 도구별로 나눠서** 실행해야 합니다 (Step 4 참고):
+```bash
+python3 scripts/migrate-history.py --to lab2 --only codex  --move
+python3 scripts/migrate-history.py --to lab1 --only claude --move
+```
+계정이 어긋나면 스크립트가 알아서 그 쪽을 건너뛰므로, 랩을 잘못 지정해도 남의
+계정으로 이력이 넘어가지는 않습니다.
+
 ### `lab1` 은 셸 함수가 아니라 실행 파일입니다
 
 `~/.local/bin/lab1` 이 본체이고 `.bashrc` 함수는 부차적입니다. 함수는 rc 파일을
