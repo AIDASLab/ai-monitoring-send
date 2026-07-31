@@ -99,19 +99,41 @@ class CodexCollector:
         self.host = host or socket.gethostname()
         self.file_state = file_state if file_state is not None else {}
         self.include_archived = include_archived
-        # Cached PER WINDOW so a newer event that only carries the weekly
-        # window can't erase the last known 5h value; reset on account switch
-        # so the previous user's percentage never shows on the new user's card.
-        self._rl_cache = {}          # {window: (ts_ms, data)}
-        self._rl_cache_owner = None  # (account_id, email) the cache belongs to
+        # Rate limits belong to an account, not to the directory forever: a
+        # login switch must not leave the previous user's percentage on the new
+        # user's dashboard card.  Cached PER WINDOW so a newer event that only
+        # carries the weekly window can't erase the last known 5h value.
+        self._rl_cache = {}  # {(account_id, email): {window: (ts_ms, data)}}
         # Account-boundary protection.  A rollout carries no account of its own,
         # and a changed file is re-parsed in full, so labelling every turn with
         # whatever account is logged in *now* would retroactively relabel turns
         # written under a previous login.  A turn is only attributable when its
         # own event timestamp falls after the previous poll AND the account was
-        # unchanged across those two polls.
+        # unchanged across those two polls -- no other account could have
+        # written it in that window.
         self._last_poll_ms = 0
         self._last_account_identity = None
+
+    @staticmethod
+    def _state_size_mtime(value):
+        if isinstance(value, dict):
+            return value.get("size"), value.get("mtime")
+        if isinstance(value, (list, tuple)) and len(value) >= 2:
+            return value[0], value[1]
+        return None, None
+
+    @staticmethod
+    def _state_for(st, account):
+        return {
+            "size": st.st_size,
+            "mtime": st.st_mtime,
+            # Codex rollout parsing is still UUID-idempotent; it has a
+            # different cumulative event format, so no byte cursor is used.
+            "offset": None,
+            "account_email": account.get("email") if account else None,
+            "account_id": account.get("account_id") if account else None,
+            "inode": getattr(st, "st_ino", None),
+        }
 
     # -- account --
     def read_account(self):
@@ -159,9 +181,13 @@ class CodexCollector:
                         yield os.path.join(dirpath, fn)
 
     def _parse_rollout(self, path, email, attributable_after_ms=None):
-        """``attributable_after_ms``: turns at or after this belong to ``email``;
-        earlier ones are emitted as ``assumed`` so ingestion drops them instead
-        of crediting them to the wrong login.  ``None`` = everything assumed."""
+        """Parse one rollout.
+
+        ``attributable_after_ms`` is the cutoff described in ``__init__``: turns
+        at or after it belong to ``email``; earlier ones are emitted as
+        ``assumed`` (no account) so ingestion drops them instead of crediting
+        them to the wrong login.  ``None`` makes every turn assumed.
+        """
         meta = {}
         model = None
         usage = []
@@ -231,12 +257,11 @@ class CodexCollector:
     def collect(self):
         account = self.read_account()
         email = account["email"] if account else None
-        owner = ((account.get("account_id") or "", email) if account else None)
-        if owner != self._rl_cache_owner:
-            self._rl_cache = {}
-            self._rl_cache_owner = owner
-        # Only a login already in place at the previous poll can claim turns.
-        account_stable = bool(owner and owner == self._last_account_identity)
+        account_key = ((account.get("account_id") or "", email) if account else None)
+        # Only a login that was already in place at the previous poll can claim
+        # turns; right after a switch nothing is attributable until the next
+        # cycle establishes the new account as stable.
+        account_stable = bool(account_key and account_key == self._last_account_identity)
         attributable_after_ms = self._last_poll_ms if account_stable else None
         now_ms = int(time.time() * 1000)
         records, updated, sessions = [], {}, []
@@ -246,19 +271,22 @@ class CodexCollector:
             except OSError:
                 continue
             mtime_ms = int(st.st_mtime * 1000)
-            prev = self.file_state.get(path)
-            changed = not (prev and prev[0] == st.st_size and prev[1] == st.st_mtime)
+            prev_size, prev_mtime = self._state_size_mtime(self.file_state.get(path))
+            changed = not (prev_size == st.st_size and prev_mtime == st.st_mtime)
             meta, usage = (None, [])
             if changed:
                 meta, usage, rl_wins = self._parse_rollout(
                     path, email, attributable_after_ms)
                 records.extend(usage)
-                self.file_state[path] = (st.st_size, st.st_mtime)
-                updated[path] = [st.st_size, st.st_mtime]
-                for k, (ts_w, v) in (rl_wins or {}).items():
-                    prev = self._rl_cache.get(k)
-                    if prev is None or ts_w >= prev[0]:
-                        self._rl_cache[k] = (ts_w, v)  # most recent real % per window
+                state = self._state_for(st, account)
+                self.file_state[path] = state
+                updated[path] = state
+                if rl_wins and account_key is not None:
+                    slot = self._rl_cache.setdefault(account_key, {})
+                    for k, (ts_w, v) in rl_wins.items():
+                        prev = slot.get(k)
+                        if prev is None or ts_w >= prev[0]:
+                            slot[k] = (ts_w, v)
             # only emit a session row for files that changed or were recently
             # active — avoids re-sending hundreds of old rollouts every cycle.
             if not changed and (now_ms - mtime_ms) > RECENT_SESSION_MS:
@@ -276,15 +304,19 @@ class CodexCollector:
                 "updated_at": int(st.st_mtime * 1000),
                 "account_email": email,
             })
-        if account and self._rl_cache:
+        cached = self._rl_cache.get(account_key) if account_key else None
+        if account and cached:
             rl_out = {"source": "codex_rollout"}
             newest = 0
-            for k, (ts_w, v) in self._rl_cache.items():
+            for k, (ts_w, v) in cached.items():
                 rl_out[k] = v
                 newest = max(newest, ts_w)
             account["rate_limits"] = rl_out
-            # rollout event time, not "whenever the sender happened to run"
+            # The timestamp comes from the rollout event, not from every
+            # collector pass that happens to reuse the cache.
             account["rate_limits_updated_at"] = newest or now_ms
+        self._last_account_identity = account_key
+        self._last_poll_ms = now_ms
         return {
             "account": account, "usage": records, "sessions": sessions,
             "file_state": updated,
